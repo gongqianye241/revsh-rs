@@ -10,7 +10,9 @@ use tokio::sync::Mutex;
 use tokio_native_tls::TlsStream;
 
 use crate::control::Control;
-use crate::message::{ConnectionHeaderType, DataType, Message, ProxyHeaderType, ProxyType};
+use crate::message::{
+    ConnectionHeaderType, DataType, Message, ProxyHeaderType, ProxyType, SocksType,
+};
 #[cfg(feature = "tty")]
 use crate::tty::{Tty, UPDATE_WINSIZE};
 
@@ -76,13 +78,39 @@ impl Broker {
                 DataType::Connection => {
                     let id = message.header_id;
                     let mut proxy_connections = proxy_connections.lock().await;
-                    if let Some(proxy_connection) = proxy_connections.get(&id) {
-                        if message.data.is_empty() {
-                            proxy_connections.remove(&id);
-                        } else {
-                            let mut writer = proxy_connection.writer.lock().await;
-                            let writer = writer.as_mut().context("error")?;
-                            writer.write_all(&message.data).await?;
+                    if let Some(proxy_connection) = proxy_connections.get_mut(&id) {
+                        let message_type = ConnectionHeaderType::from(message.header_type);
+                        match message_type {
+                            ConnectionHeaderType::Destroy => {
+                                proxy_connections.remove(&id);
+                            }
+                            ConnectionHeaderType::Data => {
+                                let mut writer = proxy_connection.writer.lock().await;
+                                let writer = writer.as_mut().context("error")?;
+                                writer.write_all(&message.data).await?;
+                            }
+                            ConnectionHeaderType::Connected => {
+                                let mut writer = proxy_connection.writer.lock().await;
+                                let writer = writer.as_mut().context("error")?;
+                                writer
+                                    .write_all(&[0x00, 0x5a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+                                    .await?;
+                            }
+                            ConnectionHeaderType::Refused => {
+                                {
+                                    let mut writer = proxy_connection.writer.lock().await;
+                                    let writer = writer.as_mut().context("error")?;
+                                    writer
+                                        .write_all(&[
+                                            0x00, 0x5b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                        ])
+                                        .await?;
+                                }
+                                proxy_connections.remove(&id);
+                            }
+                            _ => {
+                                debug!("Unhandled message: {:?}", message);
+                            }
                         }
                     }
                 }
@@ -138,11 +166,13 @@ impl Broker {
         mut writer: TlsWriter,
         id: u16,
         connection_string: &str,
+        version: u8,
     ) -> Result<()> {
         Message::new()
             .data_type(DataType::Connection)
             .header_type(ConnectionHeaderType::Create)
             .header_id(id)
+            .header_socks_type(SocksType::from(version))
             .data(connection_string.as_bytes().to_vec())
             .push(&mut writer)
             .await?;
@@ -193,12 +223,12 @@ impl Broker {
 
         let connection_string = format!("{}:{}", dst_ip, dst_port);
 
-        Self::connection_create(writer.clone(), id, &connection_string).await?;
+        Self::connection_create(writer.clone(), id, &connection_string, version).await?;
 
-        stream.write_all(&u8::to_be_bytes(0)).await?;
-        stream.write_all(&u8::to_be_bytes(90)).await?;
-        stream.write_all(&u16::to_be_bytes(dst_port)).await?;
-        stream.write_all(&dst_ip.octets()).await?;
+        //stream.write_all(&u8::to_be_bytes(0)).await?;
+        //stream.write_all(&u8::to_be_bytes(90)).await?;
+        //stream.write_all(&u16::to_be_bytes(dst_port)).await?;
+        //stream.write_all(&dst_ip.octets()).await?;
 
         let (r, w) = tokio::io::split(stream);
 

@@ -22,7 +22,9 @@ Rust implementation of [revsh](https://github.com/emptymonkey/revsh) protocol an
 
 ## Use of unsafe
 
-Unsafe is used to do terminal handling and handle window resizing events. If no need TTY use `--no-default-features` to disable TTY and any use of unsafe.
+Unsafe is used to do terminal handling and handle window resizing events. If no need TTY use `--no-default-features` to disable TTY.
+
+Also because of how code structured, used static mut.
 
 ## Usage
 

@@ -15,6 +15,13 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let matches = App::new("revsh-rs control")
         .arg(
+            Arg::with_name("proto")
+                .long("proto")
+                .default_value("1.1")
+                .takes_value(true)
+                .help("Protocol version"),
+        )
+        .arg(
             Arg::with_name("keys_dir")
                 .short("d")
                 .takes_value(true)
@@ -74,10 +81,13 @@ async fn main() -> Result<()> {
         }
     }
 
+    let proto = matches.value_of("proto").expect("No proto").to_string();
+
     // Start listener
-    info!("Starting listener on {}", listen_address);
+    info!("Starting protocol {} listener on {}", proto, listen_address);
     let mut control = Control::new(listen_address.parse()?, &key_file).await?;
     control
+        .proto(proto)?
         .shell("/bin/bash".to_string())
         .env(env)
         .proxy(proxy_address);

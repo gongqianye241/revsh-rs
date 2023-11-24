@@ -3,6 +3,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
+use crate::control::PROTOCOL;
+
 pub trait HeaderType {
     fn value(&self) -> u16;
 }
@@ -24,6 +26,35 @@ impl HeaderType for ProxyType {
             ProxyType::Dynamic => 1,
             ProxyType::Tun => 2,
             ProxyType::Tap => 3,
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(Debug, PartialEq)]
+#[allow(unused)]
+pub enum SocksType {
+    Four = 4,
+    Five = 5,
+    Unknown = 0,
+}
+
+impl HeaderType for SocksType {
+    fn value(&self) -> u16 {
+        match *self {
+            SocksType::Four => 4,
+            SocksType::Five => 5,
+            SocksType::Unknown => 0,
+        }
+    }
+}
+
+impl From<u8> for SocksType {
+    fn from(n: u8) -> SocksType {
+        match n {
+            4 => SocksType::Four,
+            5 => SocksType::Five,
+            _ => SocksType::Unknown,
         }
     }
 }
@@ -68,6 +99,8 @@ pub enum ConnectionHeaderType {
     Dormant = 3,
     Active = 4,
     Unknown = 5,
+    Connected = 7,
+    Refused = 8,
 }
 
 impl HeaderType for ConnectionHeaderType {
@@ -78,6 +111,8 @@ impl HeaderType for ConnectionHeaderType {
             ConnectionHeaderType::Data => 2,
             ConnectionHeaderType::Dormant => 3,
             ConnectionHeaderType::Active => 4,
+            ConnectionHeaderType::Connected => 7,
+            ConnectionHeaderType::Refused => 8,
             _ => 5,
         }
     }
@@ -91,6 +126,8 @@ impl From<u16> for ConnectionHeaderType {
             2 => ConnectionHeaderType::Data,
             3 => ConnectionHeaderType::Dormant,
             4 => ConnectionHeaderType::Active,
+            7 => ConnectionHeaderType::Connected,
+            8 => ConnectionHeaderType::Refused,
             _ => ConnectionHeaderType::Unknown,
         }
     }
@@ -147,6 +184,8 @@ pub struct Message {
     pub header_origin: u16,
     pub header_id: u16,
     pub header_proxy_type: u16,
+    // protocol 1.1
+    pub header_socks_type: u16,
 }
 
 impl Message {
@@ -158,6 +197,7 @@ impl Message {
             header_origin: 0,
             header_id: 0,
             header_proxy_type: 0,
+            header_socks_type: 0,
         }
     }
 
@@ -186,6 +226,11 @@ impl Message {
         self
     }
 
+    pub fn header_socks_type(mut self, header_socks_type: SocksType) -> Self {
+        self.header_socks_type = header_socks_type.value();
+        self
+    }
+
     pub async fn push<T>(self, stream: &mut Arc<Mutex<Option<T>>>) -> Result<()>
     where
         T: AsyncWriteExt + std::marker::Unpin,
@@ -204,7 +249,12 @@ impl Message {
                     || ProxyHeaderType::from(self.header_type) == ProxyHeaderType::Report
                     || ConnectionHeaderType::from(self.header_type) == ConnectionHeaderType::Create
                 {
+                    // sizeof(message->header_proxy_type)
                     header_len += 2;
+                    if unsafe { PROTOCOL } == (1, 1) {
+                        // protocol 1.1: sizeof(message->header_socks_type)
+                        header_len += 2;
+                    }
                 }
             }
             _ => {}
@@ -234,6 +284,11 @@ impl Message {
                     stream
                         .write_all(&u16::to_be_bytes(self.header_proxy_type))
                         .await?;
+                    if unsafe { PROTOCOL } == (1, 1) {
+                        stream
+                            .write_all(&u16::to_be_bytes(self.header_socks_type))
+                            .await?;
+                    }
                 }
             }
             _ => {}
@@ -293,6 +348,12 @@ impl Message {
                     stream.read_exact(&mut buf).await?;
                     message.header_proxy_type = u16::from_be_bytes(buf);
                     header_len -= 2;
+                    if unsafe { PROTOCOL } == (1, 1) {
+                        // protocol 1.1
+                        stream.read_exact(&mut buf).await?;
+                        message.header_socks_type = u16::from_be_bytes(buf);
+                        header_len -= 2;
+                    }
                 }
             }
             _ => {}

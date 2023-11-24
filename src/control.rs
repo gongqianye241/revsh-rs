@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use log::debug;
+use log::*;
 use std::fs::File;
 use std::io::Read;
 use std::net::SocketAddr;
@@ -20,7 +20,10 @@ use crate::tty::Tty;
 
 type MyTlsStream = Arc<Mutex<Option<TlsStream<TcpStream>>>>;
 
+pub static mut PROTOCOL: (u16, u16) = (1, 0);
+
 pub struct Control {
+    protocol: (u16, u16),
     message_data_size: u16,
     shell: String,
     env: Vec<String>,
@@ -47,6 +50,7 @@ impl Control {
         let acceptor = TokioTlsAcceptor::from(acceptor);
 
         Ok(Self {
+            protocol: (1, 0),
             message_data_size: u16::MAX,
             shell: "/bin/sh".to_string(),
             env: vec!["PATH=/bin:/usr/bin/".to_string()],
@@ -55,6 +59,18 @@ impl Control {
             acceptor,
             stream: Arc::new(Mutex::new(None)),
         })
+    }
+
+    pub fn proto<'a>(&'a mut self, proto: String) -> Result<&'a mut Self> {
+        let proto: Vec<u16> = proto
+            .split(".")
+            .map(|x| x.parse::<u16>().expect("Unknown protocol"))
+            .collect::<Vec<_>>();
+        self.protocol = (proto[0], proto[1]);
+        unsafe {
+            PROTOCOL = self.protocol;
+        }
+        Ok(self)
     }
 
     pub fn shell<'a>(&'a mut self, shell: String) -> &'a mut Self {
@@ -134,23 +150,34 @@ impl Control {
         let mut stream = stream.lock().await;
         let stream = stream.as_mut().context("error")?;
 
-        // Send proto major
-        stream.write_all(&u16::to_be_bytes(1)).await?;
-
-        // Send proto minor
-        stream.write_all(&u16::to_be_bytes(0)).await?;
+        // Send proto
+        let proto = unsafe { PROTOCOL };
+        debug!("Sending protocol version {}.{}", proto.0, proto.1);
+        stream.write_all(&u16::to_be_bytes(proto.0)).await?;
+        stream.write_all(&u16::to_be_bytes(proto.1)).await?;
 
         let mut buf = [0u8; 2];
 
         // Recv proto major
         stream.read_exact(&mut buf).await?;
-        let proto_major = u16::from_be_bytes(buf);
+        let peer_proto_major = u16::from_be_bytes(buf);
 
         // Recv proto minor
         stream.read_exact(&mut buf).await?;
-        let proto_minor = u16::from_be_bytes(buf);
+        let peer_proto_minor = u16::from_be_bytes(buf);
 
-        debug!("Proto {}.{}", proto_major, proto_minor);
+        debug!(
+            "Received protocol version {}.{}",
+            peer_proto_major, peer_proto_minor
+        );
+
+        if proto.0 != peer_proto_major || proto.1 != peer_proto_minor {
+            unsafe { PROTOCOL = (peer_proto_major, peer_proto_minor) };
+            warn!(
+                "Protocol mismatch. Using protocol {}.{}",
+                peer_proto_major, peer_proto_minor
+            );
+        }
 
         // Send desired data size
         stream
