@@ -76,10 +76,12 @@ impl Broker {
                     stderr.flush().await?;
                 }
                 DataType::Connection => {
+                    debug!("{:?}", message);
                     let id = message.header_id;
                     let mut proxy_connections = proxy_connections.lock().await;
                     if let Some(proxy_connection) = proxy_connections.get_mut(&id) {
                         let message_type = ConnectionHeaderType::from(message.header_type);
+                        debug!("{:?}", message_type);
                         match message_type {
                             ConnectionHeaderType::Destroy => {
                                 proxy_connections.remove(&id);
@@ -116,6 +118,9 @@ impl Broker {
                 }
                 _ => {
                     debug!("Unknown message: {:?}", message);
+                    if let Ok(s) = std::str::from_utf8(&message.data) {
+                        debug!("{s}");
+                    }
                 }
             }
 
@@ -155,7 +160,7 @@ impl Broker {
         Message::new()
             .data_type(DataType::Proxy)
             .header_type(ProxyHeaderType::Create)
-            .header_proxy_type(ProxyType::Static)
+            .header_proxy_type(ProxyType::Dynamic)
             .data(proxy_string.as_bytes().to_vec())
             .push(&mut writer)
             .await?;
@@ -304,13 +309,9 @@ impl Broker {
         }
     }
 
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         if let Some(proxy_address) = self.proxy_address {
-            Self::proxy_create(
-                self.writer.clone(),
-                &format!("{}:127.0.0.1:1081", proxy_address.port()),
-            )
-            .await?;
+            Self::proxy_create(self.writer.clone(), &format!("127.0.0.1:1081")).await?;
         }
         let message_handler = tokio::spawn(Self::message_handler(
             self.reader.clone(),

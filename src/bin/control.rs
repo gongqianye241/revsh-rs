@@ -53,7 +53,12 @@ async fn main() -> Result<()> {
     let key_file = std::fs::read_dir(keys_dir)
         .expect("Keys dir no exist")
         .filter_map(Result::ok)
-        .filter(|d| d.path().extension() == Some(OsStr::from_bytes(b"pfx")))
+        .filter(|d| {
+            d.path()
+                .display()
+                .to_string()
+                .contains("control_identity.pfx")
+        })
         .map(|f| f.path())
         .next()
         .expect("Failed to find .pfx key file");

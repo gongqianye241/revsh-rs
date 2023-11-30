@@ -20,7 +20,7 @@ use crate::tty::Tty;
 
 type MyTlsStream = Arc<Mutex<Option<TlsStream<TcpStream>>>>;
 
-pub static mut PROTOCOL: (u16, u16) = (1, 0);
+pub static mut PROTOCOL: (u16, u16) = (1, 1);
 
 pub struct Control {
     protocol: (u16, u16),
@@ -111,6 +111,7 @@ impl Control {
             .await?;
 
         let _message = Message::pull(&mut self.stream).await?;
+        debug!("{_message:?}");
 
         // Initial shell data
         Message::new()

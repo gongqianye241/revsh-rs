@@ -31,13 +31,14 @@ Also because of how code structured, used static mut.
 First go original revsh keys dir and convert keys to pfx with no export password:
 
 ```
-openssl pkcs12 -export -out identity.pfx -inkey control_key.pem -in control_cert.pem
+openssl pkcs12 -export -out control_identity.pfx -inkey control_key.pem -in control_cert.pem
+openssl pkcs12 -export -out target_identity.pfx -inkey target_key.pem -in target_cert.pem
 ```
 
 Build project:
 
 ```
-cargo build --release
+TARGET_KEY_FILE=/path/to/revsh/keys/target_identity.pfx cargo build --release
 ```
 
 Run control:
